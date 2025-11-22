@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gratefulness Simulator</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; font-family: 'Helvetica Neue', sans-serif; }
+        canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+        
+        /* UI Overlay */
+        #ui-container {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 800px;
+            background: rgba(20, 20, 20, 0.8);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-radius: 20px;
+            display: flex;
+            gap: 15px;
+            overflow-x: auto;
+            border: 1px solid rgba(255,255,255,0.1);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        /* Hide Scrollbar */
+        #ui-container::-webkit-scrollbar { display: none; }
+        #ui-container { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .btn {
+            min-width: 80px;
+            height: 80px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+        }
+
+        .btn:hover { background: rgba(255,255,255,0.2); transform: translateY(-5px); }
+        .btn.active { background: white; color: black; }
+        
+        .emoji { font-size: 28px; margin-bottom: 5px; }
+        .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; font-weight: bold; }
+
+        #title {
+            position: absolute;
+            top: 40px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255,255,255,0.8);
+            pointer-events: none;
+            transition: opacity 1s;
+        }
+        h1 { font-weight: 300; margin: 0; letter-spacing: 2px; }
+        p { font-size: 12px; opacity: 0.6; margin-top: 5px; }
+
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="title">
+        <h1 id="scene-name">Focus on...</h1>
+        <p>Drag to rotate • Scroll to zoom</p>
+    </div>
+
+    <div id="ui-container">
+        </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { SimplexNoise } from 'three/addons/math/SimplexNoise.js'; // Usually external, simulating logic here
+
+        // --- DATA ---
+        const SCENES = [
+            { id: 'coffee', name: 'Warm Coffee', icon: '☕', bg: '#3b3024' },
+            { id: 'beach', name: 'Sunrise Beach', icon: '🌅', bg: '#ff9d76' },
+            { id: 'city', name: 'Night Skyline', icon: '🌃', bg: '#0f172a' },
+            { id: 'mountain', name: 'Mountains', icon: '🏔️', bg: '#87CEEB' },
+            { id: 'campfire', name: 'Friendship', icon: '🔥', bg: '#2b1d1d' },
+            { id: 'tree', name: 'Nature', icon: '🌳', bg: '#e2f0cb' },
+            { id: 'book', name: 'Quiet Reading', icon: '📖', bg: '#5c4033' },
+            { id: 'crystal', name: 'Keepsake', icon: '💎', bg: '#1a1a2e' }
+        ];
+
+        // --- SETUP ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.02);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 10);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 1.0;
+
+        // --- LIGHTING ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 10, 7);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        const spotLight = new THREE.SpotLight(0xffa95c, 5);
+        spotLight.position.set(0, 5, 0);
+        spotLight.angle = Math.PI / 6;
+        spotLight.penumbra = 1;
+        scene.add(spotLight);
+
+        // --- GENERATORS ---
+        // This group holds whatever object is currently visible
+        let currentGroup = new THREE.Group();
+        scene.add(currentGroup);
+
+        // Generic Materials
+        const mat = {
+            wood: new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.9 }),
+            stone: new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 0.8 }),
+            water: new THREE.MeshStandardMaterial({ color: 0x00aaff, roughness: 0.1, metalness: 0.5, transparent: true, opacity: 0.8 }),
+            leaf: new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.8 }),
+            glow: new THREE.MeshBasicMaterial({ color: 0xffaa00 }),
+            white: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 }),
+            paper: new THREE.MeshStandardMaterial({ color: 0xfffff0, roughness: 0.9 }),
+            glass: new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.9, opacity: 1, roughness: 0.05, metalness: 0, thickness: 0.5 }),
+            city: new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2, metalness: 0.8 }),
+            sand: new THREE.MeshStandardMaterial({ color: 0xf4a460, roughness: 1 })
+        };
+
+        function clearScene() {
+            // Remove old objects properly
+            currentGroup.clear();
+            // Reset rotation speed
+            controls.autoRotateSpeed = 1.0;
+        }
+
+        // 1. COFFEE GENERATOR
+        function createCoffee() {
+            const group = new THREE.Group();
+            
+            // Cup
+            const cupGeo = new THREE.CylinderGeometry(0.8, 0.6, 1.2, 32);
+            const cup = new THREE.Mesh(cupGeo, mat.white);
+            cup.castShadow = true;
+            cup.position.y = 0.6;
+            group.add(cup);
+
+            // Coffee Liquid
+            const liqGeo = new THREE.CircleGeometry(0.7, 32);
+            const liq = new THREE.Mesh(liqGeo, new THREE.MeshStandardMaterial({ color: 0x3b2f2f, roughness: 0.2 }));
+            liq.rotation.x = -Math.PI / 2;
+            liq.position.y = 1.1;
+            group.add(liq);
+
+            // Handle
+            const handleGeo = new THREE.TorusGeometry(0.3, 0.08, 16, 32, Math.PI);
+            const handle = new THREE.Mesh(handleGeo, mat.white);
+            handle.rotation.z = -Math.PI / 2;
+            handle.position.set(0.7, 0.6, 0);
+            group.add(handle);
+
+            // Saucer
+            const saucerGeo = new THREE.CylinderGeometry(1.2, 1.0, 0.1, 32);
+            const saucer = new THREE.Mesh(saucerGeo, mat.white);
+            saucer.position.y = 0.05;
+            saucer.castShadow = true;
+            group.add(saucer);
+
+            // Table
+            const tableGeo = new THREE.CylinderGeometry(3, 3, 0.2, 64);
+            const table = new THREE.Mesh(tableGeo, mat.wood);
+            table.position.y = -0.1;
+            table.receiveShadow = true;
+            group.add(table);
+
+            // Steam Particles (Simple static cubes for style)
+            for(let i=0; i<5; i++) {
+                const steam = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.3}));
+                steam.position.set((Math.random()-0.5)*0.5, 1.5 + Math.random(), (Math.random()-0.5)*0.5);
+                steam.rotation.set(Math.random(), Math.random(), Math.random());
+                group.add(steam);
+            }
+
+            return group;
+        }
+
+        // 2. BEACH GENERATOR
+        function createBeach() {
+            const group = new THREE.Group();
+            
+            // Water
+            const waterGeo = new THREE.BoxGeometry(8, 0.5, 8);
+            const water = new THREE.Mesh(waterGeo, mat.water);
+            water.position.y = -0.5;
+            group.add(water);
+
+            // Sand Island
+            const sandGeo = new THREE.CylinderGeometry(2, 3, 1, 7);
+            const sand = new THREE.Mesh(sandGeo, mat.sand);
+            sand.position.set(0, 0.2, 0);
+            sand.castShadow = true;
+            sand.receiveShadow = true;
+            group.add(sand);
+
+            // Sun (Sphere)
+            const sun = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 32), new THREE.MeshBasicMaterial({color: 0xff9900}));
+            sun.position.set(0, 3, -4);
+            group.add(sun);
+
+            // Palm Tree (Abstract)
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.2, 1.5), mat.wood);
+            trunk.position.set(0.5, 1, 0.5);
+            trunk.castShadow = true;
+            group.add(trunk);
+
+            const leavesGeo = new THREE.ConeGeometry(0.8, 0.5, 5);
+            const leaves = new THREE.Mesh(leavesGeo, mat.leaf);
+            leaves.position.set(0.5, 1.8, 0.5);
+            group.add(leaves);
+
+            return group;
+        }
+
+        // 3. MOUNTAIN GENERATOR
+        function createMountain() {
+            const group = new THREE.Group();
+
+            // Ground
+            const ground = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 0.5, 7), mat.leaf);
+            ground.position.y = -0.5;
+            ground.receiveShadow = true;
+            group.add(ground);
+
+            // Procedural Mountains
+            for(let i=0; i<6; i++) {
+                const h = 1.5 + Math.random() * 2;
+                const r = 0.5 + Math.random();
+                const mtn = new THREE.Mesh(new THREE.ConeGeometry(r, h, 4), mat.stone);
+                mtn.position.set((Math.random()-0.5)*3, (h/2)-0.5, (Math.random()-0.5)*3);
+                mtn.castShadow = true;
+                mtn.receiveShadow = true;
+                // Snow cap
+                const cap = new THREE.Mesh(new THREE.ConeGeometry(r*0.3, h*0.3, 4), mat.white);
+                cap.position.y = h/2;
+                mtn.add(cap);
+                group.add(mtn);
+            }
+
+            return group;
+        }
+
+        // 4. CITY GENERATOR
+        function createCity() {
+            const group = new THREE.Group();
+            const base = new THREE.Mesh(new THREE.BoxGeometry(6, 0.5, 6), new THREE.MeshStandardMaterial({color:0x050505}));
+            base.position.y = -0.5;
+            group.add(base);
+
+            for(let i=0; i<15; i++) {
+                const h = 1 + Math.random() * 3;
+                const w = 0.5 + Math.random() * 0.5;
+                const building = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), mat.city);
+                building.position.set((Math.random()-0.5)*4, h/2 - 0.25, (Math.random()-0.5)*4);
+                
+                // Windows (Emissive dots)
+                const winGeo = new THREE.BoxGeometry(w+0.01, h*0.8, w+0.01);
+                const winMat = new THREE.MeshBasicMaterial({color: 0xffff00, wireframe: true, transparent:true, opacity: 0.1});
+                const windows = new THREE.Mesh(winGeo, winMat);
+                building.add(windows);
+
+                group.add(building);
+            }
+            return group;
+        }
+
+        // 5. FRIENDSHIP/CAMPFIRE
+        function createCampfire() {
+            const group = new THREE.Group();
+            
+            // Ground
+            const ground = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 0.2, 32), mat.leaf);
+            group.add(ground);
+
+            // Firewood
+            for(let i=0; i<3; i++) {
+                const log = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1), mat.wood);
+                log.rotation.z = Math.PI / 2;
+                log.rotation.y = (Math.PI * 2 / 3) * i;
+                log.position.y = 0.2;
+                group.add(log);
+            }
+
+            // Fire (Light source + Geometry)
+            const fireLight = new THREE.PointLight(0xff4500, 10, 5);
+            fireLight.position.y = 0.5;
+            group.add(fireLight);
+            
+            const fireGeo = new THREE.ConeGeometry(0.3, 0.8, 5);
+            const fire = new THREE.Mesh(fireGeo, new THREE.MeshBasicMaterial({color:0xff4500}));
+            fire.position.y = 0.5;
+            group.add(fire);
+
+            // People (Abstract Cylinders sitting around)
+            for(let i=0; i<4; i++) {
+                const person = new THREE.Group();
+                const body = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 0.6), new THREE.MeshStandardMaterial({color: Math.random() * 0xffffff}));
+                const head = new THREE.Mesh(new THREE.SphereGeometry(0.2), new THREE.MeshStandardMaterial({color: 0xffccaa}));
+                head.position.y = 0.5;
+                person.add(body);
+                person.add(head);
+                
+                const angle = (Math.PI * 2 / 4) * i;
+                person.position.set(Math.cos(angle)*2, 0.4, Math.sin(angle)*2);
+                person.lookAt(0,0,0);
+                group.add(person);
+            }
+
+            return group;
+        }
+
+        // 6. TREE/NATURE
+        function createTree() {
+            const group = new THREE.Group();
+            // Floating Island
+            const island = new THREE.Mesh(new THREE.DodecahedronGeometry(2), mat.stone);
+            island.position.y = -1.5;
+            group.add(island);
+
+            const grass = new THREE.Mesh(new THREE.CylinderGeometry(2, 1, 0.5, 7), mat.leaf);
+            grass.position.y = 0;
+            grass.receiveShadow = true;
+            group.add(grass);
+
+            // Big Tree
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, 2), mat.wood);
+            trunk.position.y = 1;
+            trunk.castShadow = true;
+            group.add(trunk);
+
+            const foliage = new THREE.Mesh(new THREE.IcosahedronGeometry(1.5, 0), mat.leaf);
+            foliage.position.y = 2.5;
+            foliage.castShadow = true;
+            group.add(foliage);
+
+            // A tiny swing?
+            const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.5), new THREE.MeshBasicMaterial({color:0x333333}));
+            rope.position.set(0.5, 1.8, 0);
+            group.add(rope);
+
+            return group;
+        }
+
+        // 7. BOOK
+        function createBook() {
+            const group = new THREE.Group();
+            const table = new THREE.Mesh(new THREE.BoxGeometry(4, 0.2, 3), mat.wood);
+            group.add(table);
+
+            const cover = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.3, 2.2), new THREE.MeshStandardMaterial({color: 0x880000}));
+            cover.position.y = 0.25;
+            cover.castShadow = true;
+            group.add(cover);
+
+            const pages = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.25, 2.1), mat.paper);
+            pages.position.y = 0.26;
+            pages.position.x = 0.05; // Offset slightly
+            group.add(pages);
+
+            return group;
+        }
+
+        // 8. CRYSTAL
+        function createCrystal() {
+            const group = new THREE.Group();
+            const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.2, 0.5, 8), new THREE.MeshStandardMaterial({color: 0x222222}));
+            pedestal.receiveShadow = true;
+            group.add(pedestal);
+
+            const geometry = new THREE.OctahedronGeometry(1, 0);
+            const crystal = new THREE.Mesh(geometry, new THREE.MeshPhysicalMaterial({
+                color: 0x00ffff, transmission: 0.6, opacity: 0.8, roughness: 0, metalness: 0.1, thickness: 1.0
+            }));
+            crystal.position.y = 1.5;
+            crystal.castShadow = true;
+            
+            // Animate crystal specifically
+            crystal.userData = { animate: true };
+            
+            // Inner glow
+            const light = new THREE.PointLight(0x00ffff, 5, 3);
+            light.position.y = 1.5;
+            group.add(light);
+
+            group.add(crystal);
+            return group;
+        }
+
+        // --- MAIN LOGIC ---
+
+        function loadScene(sceneId) {
+            clearScene();
+            const data = SCENES.find(s => s.id === sceneId);
+            
+            // Change Title
+            document.getElementById('scene-name').innerText = data.name;
+            document.getElementById('scene-name').style.opacity = 0;
+            setTimeout(() => document.getElementById('scene-name').style.opacity = 1, 200);
+
+            // Change Fog/BG Color smoothly
+            const targetColor = new THREE.Color(data.bg);
+            scene.background = targetColor;
+            scene.fog.color = targetColor;
+
+            // Generate Object
+            let obj;
+            switch(sceneId) {
+                case 'coffee': obj = createCoffee(); break;
+                case 'beach': obj = createBeach(); break;
+                case 'city': obj = createCity(); break;
+                case 'mountain': obj = createMountain(); break;
+                case 'campfire': obj = createCampfire(); break;
+                case 'tree': obj = createTree(); break;
+                case 'book': obj = createBook(); break;
+                case 'crystal': obj = createCrystal(); break;
+            }
+            
+            // Animate In
+            obj.scale.set(0,0,0);
+            currentGroup.add(obj);
+            
+            // Simple elastic scale up effect
+            let scale = 0;
+            const interval = setInterval(() => {
+                scale += 0.05;
+                obj.scale.set(scale, scale, scale);
+                if(scale >= 1) clearInterval(interval);
+            }, 16);
+        }
+
+        // --- UI GENERATION ---
+        const uiContainer = document.getElementById('ui-container');
+        SCENES.forEach(item => {
+            const btn = document.createElement('button');
+            btn.className = 'btn';
+            btn.innerHTML = `<span class="emoji">${item.icon}</span><span class="label">${item.name}</span>`;
+            btn.onclick = () => {
+                document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                loadScene(item.id);
+            };
+            uiContainer.appendChild(btn);
+        });
+
+        // Initialize first scene
+        document.querySelector('.btn').click();
+
+        // --- ANIMATION LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            
+            // Rotate specific objects if they have the flag
+            currentGroup.children.forEach(child => {
+                if(child.userData.animate) {
+                    child.rotation.y += 0.01;
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+        
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+
+    </script>
+</body>
+</html>
